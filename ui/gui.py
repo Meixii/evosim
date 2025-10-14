@@ -341,6 +341,16 @@ class SimulationGUI:
         ttk.Button(self.control_frame, text="Export Config", command=self._export_config).grid(row=2, column=1, padx=5, pady=5)
         ttk.Button(self.control_frame, text="View Charts", command=self._view_charts).grid(row=2, column=2, padx=5, pady=5)
         ttk.Button(self.control_frame, text="Export Report", command=self._export_report).grid(row=2, column=3, padx=5, pady=5)
+        
+        # Animal tracking buttons
+        self.tracking_button = ttk.Button(self.control_frame, text="Enable Animal Tracking", command=self._toggle_animal_tracking)
+        self.tracking_button.grid(row=3, column=0, padx=5, pady=5)
+        
+        ttk.Button(self.control_frame, text="Export Animal History", command=self._export_animal_history).grid(row=3, column=1, padx=5, pady=5)
+        
+        # Tracking status label
+        self.tracking_status_label = ttk.Label(self.control_frame, text="Tracking: Disabled", foreground='red')
+        self.tracking_status_label.grid(row=3, column=2, padx=5, pady=5)
     
     def _create_stats_frame(self):
         """Create statistics frame."""
@@ -739,6 +749,14 @@ class SimulationGUI:
             self.statistics_collector.start_tracking()
             
             self.simulation.start()
+            
+            # Update tracking status display
+            if hasattr(self, 'tracking_status_label'):
+                if self.simulation.track_animal_history:
+                    self.tracking_status_label.config(text="Tracking: Enabled", foreground='green')
+                else:
+                    self.tracking_status_label.config(text="Tracking: Disabled", foreground='red')
+                    
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start simulation: {str(e)}")
     
@@ -822,7 +840,8 @@ class SimulationGUI:
         filename = filedialog.asksaveasfilename(
             title="Save Configuration",
             defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile=f"config_{time.time()}.json"
         )
         
         if filename:
@@ -867,7 +886,8 @@ class SimulationGUI:
         filename = filedialog.asksaveasfilename(
             title="Export Data",
             defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile=f"simulation_data_{time.time()}.json"
         )
         
         if filename:
@@ -889,6 +909,92 @@ class SimulationGUI:
                 
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to export data: {str(e)}")
+    
+    def _export_animal_history(self):
+        """Export step history for a selected animal."""
+        if self.simulation is None:
+            messagebox.showerror("Error", "No simulation available!")
+            return
+        
+        # Check if tracking is enabled
+        if not self.simulation.track_animal_history:
+            messagebox.showwarning("Warning", 
+                "Animal tracking is disabled!\n\n"
+                "To collect animal history data:\n"
+                "1. Click 'Enable Animal Tracking' button\n"
+                "2. Start a new simulation\n"
+                "3. Then try exporting again")
+            return
+        
+        # Get available animal IDs
+        available_ids = self.simulation.get_available_animal_ids()
+        if not available_ids:
+            messagebox.showwarning("Warning", 
+                "No animal history data available!\n\n"
+                "This could mean:\n"
+                "• Animal tracking was disabled during simulation\n"
+                "• Simulation hasn't run yet\n"
+                "• All animal data was cleared\n\n"
+                "Try starting a new simulation with tracking enabled.")
+            return
+        
+        # Create a simple dialog to select animal
+        from tkinter import simpledialog
+        animal_id = simpledialog.askstring(
+            "Select Animal",
+            f"Enter animal ID to export history for:\n\nAvailable IDs: {', '.join(available_ids[:10])}{'...' if len(available_ids) > 10 else ''}",
+            initialvalue=available_ids[0] if available_ids else ""
+        )
+        
+        if not animal_id:
+            return
+        
+        if animal_id not in available_ids:
+            messagebox.showerror("Error", f"Animal ID '{animal_id}' not found!")
+            return
+        
+        # Ask for filename
+        filename = filedialog.asksaveasfilename(
+            title="Export Animal History",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile=f"{animal_id}_history.json"
+        )
+        
+        if filename:
+            try:
+                exported_file = self.simulation.export_animal_history(animal_id, filename)
+                messagebox.showinfo("Success", f"Animal history exported to:\n{exported_file}")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to export animal history: {str(e)}")
+    
+    def _toggle_animal_tracking(self):
+        """Toggle animal history tracking on/off."""
+        if self.simulation is None:
+            messagebox.showerror("Error", "No simulation available!")
+            return
+        
+        # Toggle tracking
+        current_state = self.simulation.track_animal_history
+        self.simulation.enable_animal_history_tracking(not current_state)
+        
+        # Update button text and status label
+        if hasattr(self, 'tracking_button'):
+            if self.simulation.track_animal_history:
+                self.tracking_button.config(text="Disable Animal Tracking")
+                self.tracking_status_label.config(text="Tracking: Enabled", foreground='green')
+                messagebox.showinfo("Animal Tracking", 
+                    "Animal history tracking is now ENABLED!\n\n"
+                    "This will collect detailed step-by-step data for all animals.\n"
+                    "Note: Tracking must be enabled BEFORE starting a simulation.")
+            else:
+                self.tracking_button.config(text="Enable Animal Tracking")
+                self.tracking_status_label.config(text="Tracking: Disabled", foreground='red')
+                messagebox.showinfo("Animal Tracking", 
+                    "Animal history tracking is now DISABLED!\n\n"
+                    "No new animal data will be collected.\n"
+                    "Existing data will be preserved.")
     
     def _export_config(self):
         """Export current configuration."""
@@ -957,7 +1063,8 @@ class SimulationGUI:
         filename = filedialog.asksaveasfilename(
             title="Export Report",
             defaultextension=".txt",
-            filetypes=[("Text files", "*.txt"), ("JSON files", "*.json"), ("CSV files", "*.csv"), ("All files", "*.*")]
+            filetypes=[("Text files", "*.txt"), ("JSON files", "*.json"), ("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"simulation_report_{time.time()}.txt"
         )
         
         if filename:
@@ -1223,7 +1330,8 @@ class SimulationGUI:
         filename = filedialog.asksaveasfilename(
             title="Export Animals Data",
             defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("CSV files", "*.csv"), ("All files", "*.*")]
+            filetypes=[("JSON files", "*.json"), ("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"animals_data_{time.time()}.json"
         )
         
         if filename:
