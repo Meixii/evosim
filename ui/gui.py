@@ -347,6 +347,7 @@ class SimulationGUI:
         self.tracking_button.grid(row=3, column=0, padx=5, pady=5)
         
         ttk.Button(self.control_frame, text="Export Animal History", command=self._export_animal_history).grid(row=3, column=1, padx=5, pady=5)
+        ttk.Button(self.control_frame, text="Export All Animal History", command=self._export_all_animal_history).grid(row=3, column=3, padx=5, pady=5)
         
         # Tracking status label
         self.tracking_status_label = ttk.Label(self.control_frame, text="Tracking: Disabled", foreground='red')
@@ -402,7 +403,7 @@ class SimulationGUI:
         self.animals_frame = ttk.LabelFrame(self.root, text="Animal Statistics", padding=10)
         
         # Create treeview for animal list with sortable columns
-        columns = ('ID', 'Position', 'Status', 'Health', 'Age', 'Fitness', 'Actions', 'Resources', 'Generation')
+        columns = ('ID', 'Position', 'Status', 'Health', 'Age', 'Fitness', 'Actions', 'Resources')
         
         self.animals_tree = ttk.Treeview(self.animals_frame, columns=columns, show='headings', height=15)
         
@@ -415,7 +416,6 @@ class SimulationGUI:
         self.animals_tree.heading('Fitness', text='Fitness', command=lambda: self._sort_animals('Fitness'))
         self.animals_tree.heading('Actions', text='Actions', command=lambda: self._sort_animals('Actions'))
         self.animals_tree.heading('Resources', text='Resources', command=lambda: self._sort_animals('Resources'))
-        self.animals_tree.heading('Generation', text='Generation', command=lambda: self._sort_animals('Generation'))
         
         # Set column widths
         self.animals_tree.column('ID', width=100)
@@ -426,7 +426,6 @@ class SimulationGUI:
         self.animals_tree.column('Fitness', width=80)
         self.animals_tree.column('Actions', width=120)
         self.animals_tree.column('Resources', width=100)
-        self.animals_tree.column('Generation', width=80)
         
         # Add scrollbar
         animals_scrollbar = ttk.Scrollbar(self.animals_frame, orient='vertical', command=self.animals_tree.yview)
@@ -689,8 +688,9 @@ class SimulationGUI:
         """Handle simulation step updates."""
         # Collect step data for statistics
         if self.statistics_collector.is_tracking():
-            # Record step data (this will be used for trend analysis)
-            pass
+            # Record step data for trend analysis
+            step_number = step_data.get('step', 0)
+            self.statistics_collector.record_step(step_number, step_data)
     
     def _on_simulation_generation(self, generation_data):
         """Handle simulation generation updates."""
@@ -938,21 +938,74 @@ class SimulationGUI:
                 "Try starting a new simulation with tracking enabled.")
             return
         
-        # Create a simple dialog to select animal
-        from tkinter import simpledialog
-        animal_id = simpledialog.askstring(
-            "Select Animal",
-            f"Enter animal ID to export history for:\n\nAvailable IDs: {', '.join(available_ids[:10])}{'...' if len(available_ids) > 10 else ''}",
-            initialvalue=available_ids[0] if available_ids else ""
-        )
+        # Create selection dialog with dropdown
+        self._create_animal_selection_dialog(available_ids)
+    
+    def _create_animal_selection_dialog(self, available_ids):
+        """Create a dialog to select animal from dropdown."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Select Animal to Export")
+        dialog.geometry("400x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
         
-        if not animal_id:
-            return
+        # Center the dialog
+        dialog.geometry("+%d+%d" % (self.root.winfo_rootx() + 50, self.root.winfo_rooty() + 50))
         
-        if animal_id not in available_ids:
-            messagebox.showerror("Error", f"Animal ID '{animal_id}' not found!")
-            return
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding=20)
+        main_frame.pack(fill='both', expand=True)
         
+        # Title
+        ttk.Label(main_frame, text="Select Animal to Export History", font=('Arial', 12, 'bold')).pack(pady=(0, 20))
+        
+        # Animal selection
+        ttk.Label(main_frame, text="Available Animals:").pack(anchor='w')
+        
+        # Create frame for listbox and scrollbar
+        list_frame = ttk.Frame(main_frame)
+        list_frame.pack(fill='both', expand=True, pady=10)
+        
+        # Listbox with scrollbar
+        listbox = tk.Listbox(list_frame, height=8)
+        scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=listbox.yview)
+        listbox.configure(yscrollcommand=scrollbar.set)
+        
+        # Populate listbox
+        for animal_id in available_ids:
+            listbox.insert(tk.END, animal_id)
+        
+        # Pack listbox and scrollbar
+        listbox.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+        # Buttons frame
+        buttons_frame = ttk.Frame(main_frame)
+        buttons_frame.pack(fill='x', pady=20)
+        
+        selected_animal = [None]  # Use list to allow modification in nested function
+        
+        def on_select():
+            selection = listbox.curselection()
+            if selection:
+                selected_animal[0] = available_ids[selection[0]]
+                self._export_selected_animal_history(selected_animal[0])
+                dialog.destroy()
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        # Buttons
+        ttk.Button(buttons_frame, text="Export Selected", command=on_select).pack(side='left', padx=5)
+        ttk.Button(buttons_frame, text="Cancel", command=on_cancel).pack(side='left', padx=5)
+        
+        # Select first item by default
+        if available_ids:
+            listbox.selection_set(0)
+            listbox.see(0)
+    
+    def _export_selected_animal_history(self, animal_id):
+        """Export history for the selected animal."""
         # Ask for filename
         filename = filedialog.asksaveasfilename(
             title="Export Animal History",
@@ -968,6 +1021,57 @@ class SimulationGUI:
                 
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to export animal history: {str(e)}")
+    
+    def _export_all_animal_history(self):
+        """Export step history for all animals."""
+        if self.simulation is None:
+            messagebox.showerror("Error", "No simulation available!")
+            return
+        
+        # Check if tracking is enabled
+        if not self.simulation.track_animal_history:
+            messagebox.showwarning("Warning", 
+                "Animal tracking is disabled!\n\n"
+                "To collect animal history data:\n"
+                "1. Click 'Enable Animal Tracking' button\n"
+                "2. Start a new simulation\n"
+                "3. Then try exporting again")
+            return
+        
+        # Get available animal IDs
+        available_ids = self.simulation.get_available_animal_ids()
+        if not available_ids:
+            messagebox.showwarning("Warning", 
+                "No animal history data available!\n\n"
+                "This could mean:\n"
+                "• Animal tracking was disabled during simulation\n"
+                "• Simulation hasn't run yet\n"
+                "• All animal data was cleared\n\n"
+                "Try starting a new simulation with tracking enabled.")
+            return
+        
+        # Ask for directory to save all files
+        import os
+        from tkinter import filedialog
+        directory = filedialog.askdirectory(title="Select Directory to Save All Animal History Files")
+        
+        if not directory:
+            return
+        
+        try:
+            exported_files = []
+            for animal_id in available_ids:
+                filename = os.path.join(directory, f"{animal_id}_history.json")
+                exported_file = self.simulation.export_animal_history(animal_id, filename)
+                exported_files.append(exported_file)
+            
+            messagebox.showinfo("Success", 
+                f"Exported {len(exported_files)} animal history files to:\n{directory}\n\n"
+                f"Files exported:\n" + "\n".join([os.path.basename(f) for f in exported_files[:10]]) + 
+                (f"\n... and {len(exported_files) - 10} more files" if len(exported_files) > 10 else ""))
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export animal history: {str(e)}")
     
     def _toggle_animal_tracking(self):
         """Toggle animal history tracking on/off."""
@@ -1039,13 +1143,18 @@ class SimulationGUI:
             return
         
         try:
-            # Collect statistics data
+            # Collect comprehensive statistics data
             stats_data = {
                 'fitness_scores': self.statistics_collector.get_fitness_trend(),
                 'survival_rates': self.statistics_collector.get_survival_rate_trend(),
                 'resource_consumption': self.statistics_collector.get_resource_consumption_trend(),
                 'behavioral_patterns': self.statistics_collector.get_behavioral_pattern_trend(),
-                'summary': self.statistics_collector.get_summary_statistics()
+                'summary': self.statistics_collector.get_summary_statistics(),
+                # Add simulation-specific data
+                'simulation_stats': self.simulation.get_statistics() if self.simulation else {},
+                'step_history': self.simulation.get_step_history() if self.simulation else [],
+                'generation_history': self.simulation.get_generation_history() if self.simulation else [],
+                'final_animal_stats': self.simulation.get_final_animal_statistics() if self.simulation else []
             }
             
             # Create visualization window
@@ -1124,8 +1233,9 @@ class SimulationGUI:
         # Get all animals (alive and dead)
         all_animals = self.simulation.environment.animals + self.simulation.environment.dead_animals
         
-        # Sort by fitness by default (highest first)
-        all_animals.sort(key=lambda a: a.fitness, reverse=True)
+        # Only sort by fitness if no custom sort is applied
+        if not hasattr(self, '_current_sort_column') or self._current_sort_column is None:
+            all_animals.sort(key=lambda a: a.fitness, reverse=True)
         
         for animal in all_animals:
             # Get animal state
@@ -1151,9 +1261,6 @@ class SimulationGUI:
             learning = animal.get_learning_progress()
             learning_info = f"L:{learning['adaptation_score']:.2f}"
             
-            # Get current generation
-            current_generation = self.simulation.current_generation if self.simulation else 0
-            
             # Insert into tree
             self.animals_tree.insert('', 'end', values=(
                 state['animal_id'][:12],  # Show more of the ID
@@ -1163,8 +1270,7 @@ class SimulationGUI:
                 state['age'],
                 f"{state['fitness']:.1f}",
                 actions,
-                f"{resources} {learning_info}",  # Include learning progress
-                current_generation
+                f"{resources} {learning_info}"  # Include learning progress
             ))
     
     def _clear_animals_list(self):
@@ -1203,8 +1309,6 @@ class SimulationGUI:
             all_animals.sort(key=lambda a: a.alive, reverse=self._current_sort_reverse)
         elif column == 'Position':
             all_animals.sort(key=lambda a: (a.position[1], a.position[0]), reverse=self._current_sort_reverse)
-        elif column == 'Generation':
-            all_animals.sort(key=lambda a: getattr(a, 'generation', 0), reverse=self._current_sort_reverse)
         
         # Clear and repopulate with sorted data
         for item in self.animals_tree.get_children():
@@ -1222,9 +1326,6 @@ class SimulationGUI:
             learning = animal.get_learning_progress()
             learning_info = f"L:{learning['adaptation_score']:.2f}"
             
-            # Get animal's birth generation
-            animal_generation = getattr(animal, 'generation', 0)
-            
             self.animals_tree.insert('', 'end', values=(
                 state['animal_id'][:12],
                 coords,
@@ -1233,8 +1334,7 @@ class SimulationGUI:
                 state['age'],
                 f"{state['fitness']:.1f}",
                 actions,
-                f"{resources} {learning_info}",
-                animal_generation
+                f"{resources} {learning_info}"
             ))
     
     def _filter_animals(self, event=None):
